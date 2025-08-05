@@ -83,10 +83,10 @@ func telegramHandler(w http.ResponseWriter, r *http.Request) {
 	// Get hashtags from OpenRouter
 	hashtags, err := getHashtags(article.Title, article.Description)
 	if err != nil {
-		log.Printf("could not get hashtags: %v", err)
-		// We can decide to post without hashtags or return an error.
-		// For now, let's log the error and continue without hashtags.
-		hashtags = "" // Ensure hashtags is not nil
+		log.Printf("ERROR: could not get hashtags: %v", err)
+		// Return an error to stop the process. This prevents posting to Twitter.
+		http.Error(w, "Failed to get hashtags", http.StatusInternalServerError)
+		return
 	}
 	log.Println("[SUCCESS] Hashtags generated.")
 
