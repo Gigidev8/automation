@@ -156,7 +156,7 @@ func sendTelegramNotification(message string, parseMode string) {
 }
 
 func fetchArticle(id string) (*Article, error) {
-	url := fmt.Sprintf("https://viewon.news/notion.php?id=%s", id)
+	url := fmt.Sprintf("https://viewon.news/automation.php?id=%s", id)
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch article: %w", err)
