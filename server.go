@@ -74,8 +74,11 @@ func telegramHandler(w http.ResponseWriter, r *http.Request) {
 	// Fetch the article using the message text as the ID
 	article, err := fetchArticle(update.Message.Text)
 	if err != nil {
+		errMsg := fmt.Sprintf("❌ Failed to fetch article with ID %s. Reason: %v", update.Message.Text, err)
+		sendTelegramNotification(errMsg, "") // Send error as plain text
 		log.Printf("could not fetch article: %v", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		// We've handled the error by notifying. Now tell Telegram we're OK to prevent retries.
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	log.Println("[SUCCESS] Article data fetched.")
@@ -83,21 +86,73 @@ func telegramHandler(w http.ResponseWriter, r *http.Request) {
 	// Get hashtags from OpenRouter
 	hashtags, err := getHashtags(article.Title, article.Description)
 	if err != nil {
+		errMsg := fmt.Sprintf("❌ Failed to get hashtags for article with ID %s. Reason: %v", update.Message.Text, err)
+		sendTelegramNotification(errMsg, "") // Send error as plain text
 		log.Printf("ERROR: could not get hashtags: %v", err)
-		// Return an error to stop the process. This prevents posting to Twitter.
-		http.Error(w, "Failed to get hashtags", http.StatusInternalServerError)
+		// We've handled the error. Tell Telegram we're OK to prevent retries.
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	log.Println("[SUCCESS] Hashtags generated.")
 
 	// Post the article to Twitter
 	if err := postToTwitter(article, update.Message.Text, hashtags); err != nil {
+		errMsg := fmt.Sprintf("❌ Failed to post to Twitter for article with ID %s. Reason: %v", update.Message.Text, err)
+		sendTelegramNotification(errMsg, "") // Send error as plain text
 		log.Printf("could not post to twitter: %v", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		// We've handled the error. Tell Telegram we're OK to prevent retries.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	log.Println("[SUCCESS] Tweet posted to X.")
+
+	w.WriteHeader(http.StatusOK)
+	// Send a success notification with Markdown formatting.
+	successMessage := fmt.Sprintf("✅ Successfully posted article with ID: `%s`", update.Message.Text)
+	sendTelegramNotification(successMessage, "MarkdownV2")
+}
+
+// sendTelegramNotification sends a formatted message to a specified Telegram chat.
+func sendTelegramNotification(message string, parseMode string) {
+	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	chatID := os.Getenv("TELEGRAM_CHAT_ID")
+
+	if botToken == "" || chatID == "" {
+		log.Println("WARNING: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set. Cannot send notification.")
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
+
+	// Use a map for the request body to handle different fields easily.
+	requestData := map[string]string{
+		"chat_id": chatID,
+		"text":    message,
+	}
+	// Only add parse_mode if it's not empty, otherwise send as plain text.
+	if parseMode != "" {
+		requestData["parse_mode"] = parseMode
+	}
+
+	requestBody, err := json.Marshal(requestData)
+	if err != nil {
+		log.Printf("WARNING: Failed to marshal notification body: %v", err)
+		return
+	}
+
+	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestBody))
+	if err != nil {
+		log.Printf("WARNING: Failed to send notification to Telegram: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("WARNING: Telegram API returned non-200 status for notification: %s", string(body))
+	} else {
+		log.Printf("[SUCCESS] Sent notification to Telegram group: %s", message)
+	}
 }
 
 func fetchArticle(id string) (*Article, error) {
